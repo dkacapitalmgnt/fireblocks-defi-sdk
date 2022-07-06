@@ -1,3 +1,4 @@
+import logging
 import time
 
 from fireblocks_sdk import (
@@ -15,7 +16,7 @@ from fireblocks_sdk.api_types import TRANSACTION_STATUS_CANCELLED
 from .chain import Chain
 from web3 import Web3
 
-SUBMIT_TIMEOUT = 45
+SUBMIT_TIMEOUT = 180
 STATUS_KEY = "status"
 
 
@@ -123,9 +124,9 @@ class Web3Bridge:
         :return: Transaction last status after timeout / completion.
         """
         timeout = 0
-        current_status = self.fb_api_client.get_transaction_by_id(tx_id)[STATUS_KEY]
+        current_status = self.fb_api_client.get_transaction_by_id(tx_id)
         while (
-            current_status
+            current_status[STATUS_KEY]
             not in (
                 TRANSACTION_STATUS_COMPLETED,
                 TRANSACTION_STATUS_FAILED,
@@ -134,13 +135,11 @@ class Web3Bridge:
             )
             and timeout < SUBMIT_TIMEOUT
         ):
-            print(
-                f"TX [{tx_id}] is currently at status - {current_status} {'.' * (timeout % 4)}                ",
-                end="\r",
-            )
-            time.sleep(4)
-            current_status = self.fb_api_client.get_transaction_by_id(tx_id)[STATUS_KEY]
+            logging.info(f"Pending fireblocks: {current_status[STATUS_KEY]}")
+            logging.debug(current_status)
+
+            time.sleep(1)
+            current_status = self.fb_api_client.get_transaction_by_id(tx_id)
             timeout += 1
 
-        print(f"\nTX [{tx_id}] is currently at status - {current_status}")
         return current_status
