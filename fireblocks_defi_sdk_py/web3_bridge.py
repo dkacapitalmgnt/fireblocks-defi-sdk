@@ -139,7 +139,10 @@ class Web3Bridge:
             logging.debug(current_status)
 
             time.sleep(1)
-            current_status = self.fb_api_client.get_transaction_by_id(tx_id)
+            try:
+                current_status = self.fb_api_client.get_transaction_by_id(tx_id)
+            except Exception as e:
+                logging.info(f"Error while getting FB transaction status: {e}")
             timeout += 1
 
         return current_status
