@@ -94,13 +94,27 @@ class Web3Bridge:
         :return:
         """
         if not test:
+            whitelist_address = False
+            destination = None
             whitelisted_addresses = self.fb_api_client.get_external_wallets()
             for address in whitelisted_addresses:
                 target = transaction["to"].lower()
                 for token in address["assets"]:
-                    if token["address"].lower() == target and self.asset == token["id"]:
-                        destination = TransferPeerPath(EXTERNAL_WALLET, address["id"])
-            raise ValueError(f"Whitelisted address not found for {transaction}")
+                    if token["address"].lower() == target:
+                        logging.info("found address on whitelist")
+                        whitelist_address == True
+                        if self.asset == token["id"]:
+                            logging.info(f"found correct asset for whitelisted address")
+                            destination = TransferPeerPath(
+                                EXTERNAL_WALLET, address["id"]
+                            )
+            if not destination:
+                if whitelist_address:
+                    raise ValueError(
+                        f"Address is whitelisted but not correct asset: {transaction}"
+                    )
+                else:
+                    raise ValueError(f"Address not whitelisted: {transaction}")
         else:
             destination = DestinationTransferPeerPath(
                 ONE_TIME_ADDRESS, one_time_address={"address": transaction["to"]}
