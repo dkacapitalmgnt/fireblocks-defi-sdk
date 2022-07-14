@@ -111,11 +111,11 @@ class Web3Bridge:
             if not destination:
                 if whitelist_address:
                     raise ValueError(
-                        f"Address is whitelisted but not correct asset, address: {whitelist_address}, asset: {self.asset}"
+                        f"Address is whitelisted but not correct asset, address: {transaction['to']}, asset: {self.asset}"
                     )
                 else:
                     raise ValueError(
-                        f"Address not whitelisted, address: {whitelist_address}, asset: {self.asset}"
+                        f"Address not whitelisted, address: {transaction['to']}, asset: {self.asset}"
                     )
         else:
             destination = DestinationTransferPeerPath(
