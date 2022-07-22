@@ -1,6 +1,8 @@
 import logging
 import time
 
+from fireblocks_sdk.api_types import TRANSACTION_STATUS_CONFIRMING
+
 from fireblocks_sdk import (
     FireblocksSDK,
     TransferPeerPath,
@@ -11,13 +13,24 @@ from fireblocks_sdk import (
     TRANSACTION_STATUS_BLOCKED,
     TRANSACTION_STATUS_COMPLETED,
     TRANSACTION_STATUS_FAILED,
+    TRANSACTION_STATUS_BROADCASTING,
 )
 from fireblocks_sdk.api_types import TRANSACTION_STATUS_CANCELLED
 from .chain import Chain
 from web3 import Web3
 
-SUBMIT_TIMEOUT = 180
+SUBMIT_TIMEOUT = 90
 STATUS_KEY = "status"
+
+FAILED_STATUS = [
+    TRANSACTION_STATUS_FAILED,
+    TRANSACTION_STATUS_BLOCKED,
+    TRANSACTION_STATUS_CANCELLED,
+]
+PENDING_STATUS_TX_HASH = [
+    TRANSACTION_STATUS_BROADCASTING,
+    TRANSACTION_STATUS_CONFIRMING,
+]
 
 
 CHAIN_TO_ASSET_ID = {
@@ -101,21 +114,23 @@ class Web3Bridge:
                 target = transaction["to"].lower()
                 for token in address["assets"]:
                     if token["address"].lower() == target:
-                        logging.info("found address on whitelist")
+                        logging.debug("found address on whitelist")
                         whitelist_address == True
                         if self.asset == token["id"]:
-                            logging.info(f"found correct asset for whitelisted address")
+                            logging.debug(
+                                f"found correct asset for whitelisted address"
+                            )
                             destination = TransferPeerPath(
                                 EXTERNAL_WALLET, address["id"]
                             )
             if not destination:
                 if whitelist_address:
                     raise ValueError(
-                        f"Address is whitelisted but not correct asset, address: {transaction['to']}, asset: {self.asset}"
+                        f"Address is whitelisted but not correct asset, address: {whitelist_address}, asset: {self.asset}"
                     )
                 else:
                     raise ValueError(
-                        f"Address not whitelisted, address: {transaction['to']}, asset: {self.asset}"
+                        f"Address not whitelisted, address: {whitelist_address}, asset: {self.asset}"
                     )
         else:
             destination = DestinationTransferPeerPath(
@@ -132,6 +147,31 @@ class Web3Bridge:
             extra_parameters={"contractCallData": transaction["data"]},
         )
 
+    def check_tx_is_sent(self, tx_id):
+        try:
+            current_status = self.fb_api_client.get_transaction_by_id(tx_id)
+            if current_status[STATUS_KEY] in ():
+                return current_status
+            else:
+                time.sleep(1)
+        except:
+            return {}
+
+    def check_tx_status_chain(self, tx_hash: str):
+        logging.info("Checking on-chain status")
+        try:
+            receipt = self.web_provider.eth.wait_for_transaction_receipt(
+                tx_hash, timeout=120, poll_latency=1
+            )
+        except Exception as e:
+            logging.info("Failed getting the receipt")
+            raise e
+        if receipt["status"] == 0:
+            logging.info("Transaction failed on chain")
+            return False
+        else:
+            return True
+
     def check_tx_is_completed(self, tx_id) -> dict:
         """
         This function waits for SUBMIT_TIMEOUT*4 (180 by default) seconds to retrieve status of the transaction sent to
@@ -140,25 +180,61 @@ class Web3Bridge:
         :return: Transaction last status after timeout / completion.
         """
         timeout = 0
-        current_status = self.fb_api_client.get_transaction_by_id(tx_id)
-        while (
-            current_status[STATUS_KEY]
-            not in (
-                TRANSACTION_STATUS_COMPLETED,
-                TRANSACTION_STATUS_FAILED,
-                TRANSACTION_STATUS_BLOCKED,
-                TRANSACTION_STATUS_CANCELLED,
-            )
-            and timeout < SUBMIT_TIMEOUT
-        ):
-            logging.info(f"Pending fireblocks: {current_status[STATUS_KEY]}")
-            logging.debug(current_status)
+        transaction_hash = False
+        previous_status = False
 
-            time.sleep(1)
+        while True:
             try:
                 current_status = self.fb_api_client.get_transaction_by_id(tx_id)
             except Exception as e:
                 logging.info(f"Error while getting FB transaction status: {e}")
+                time.sleep(3)
+                timeout += 3
+                continue
             timeout += 1
 
-        return current_status
+            # Logging if status has changed
+            if current_status[STATUS_KEY] != previous_status:
+                previous_status = current_status[STATUS_KEY]
+                logging.info(f"Pending fireblocks: {previous_status}")
+
+            # Transaction seemed to have failed
+            # TODO: This assumes transaction is not sent,
+            if current_status[STATUS_KEY] in FAILED_STATUS:
+                logging.error(current_status)
+                return False
+
+            # Fireblocks confirms that tx is finished
+            if current_status[STATUS_KEY] == TRANSACTION_STATUS_COMPLETED:
+                # We want to still confirm state from chain
+                transaction_hash = current_status["txHash"]
+                return self.check_tx_status_chain(transaction_hash)
+
+            # timeout while not yet confirmed or failed
+            if timeout > SUBMIT_TIMEOUT:
+                # If we have tx hash, confirm from blockchain if accepted or failed
+                if transaction_hash:
+                    return self.check_tx_status_chain(transaction_hash)
+                else:
+                    # TODO: Trigger transaction cancel on fireblocks
+                    # Caller should resend transaction
+                    return False
+
+            # See if fireblocks provides tx hash at this point
+            if (
+                current_status[STATUS_KEY] in PENDING_STATUS_TX_HASH
+                and not transaction_hash
+            ):
+                if "txHash" in current_status:
+                    transaction_hash = current_status["txHash"]
+
+            # Follow the transaction hash on-chain
+            if transaction_hash:
+                try:
+                    return self.check_tx_status_chain(transaction_hash)
+                except:
+                    # likely timed out, increase timeout
+                    timeout += 120
+
+            logging.debug(current_status)
+            time.sleep(1)
