@@ -199,9 +199,9 @@ class Web3Bridge:
                 logging.info(f"Pending fireblocks: {previous_status}")
 
             # Transaction seemed to have failed
-            # TODO: This assumes transaction is not sent,
+            # TODO: This assumes transaction is not sent, is there a case where it looks failed but is not
             if current_status[STATUS_KEY] in FAILED_STATUS:
-                logging.error(current_status)
+                logging.error(f"Fireblocks failed transaction: {current_status}")
                 return False
 
             # Fireblocks confirms that tx is finished
@@ -214,11 +214,14 @@ class Web3Bridge:
             if timeout > SUBMIT_TIMEOUT:
                 # If we have tx hash, confirm from blockchain if accepted or failed
                 if transaction_hash:
-                    return self.check_tx_status_chain(transaction_hash)
-                else:
-                    # TODO: Trigger transaction cancel on fireblocks
-                    # Caller should resend transaction
-                    return False
+                    try:
+                        if self.check_tx_status_chain(transaction_hash):
+                            return True
+                    except:
+                        pass
+                # Cancel tx, caller should resend
+                self.fb_api_client.cancel_transaction_by_id(tx_id)
+                return False
 
             # See if fireblocks provides tx hash at this point
             if (
