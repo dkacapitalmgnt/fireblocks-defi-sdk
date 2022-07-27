@@ -220,6 +220,9 @@ class Web3Bridge:
                     except:
                         pass
                 # Cancel tx, caller should resend
+                logging.error(
+                    "Timeout while waiting for Fireblocks to confirm transaction"
+                )
                 self.fb_api_client.cancel_transaction_by_id(tx_id)
                 return False
 
