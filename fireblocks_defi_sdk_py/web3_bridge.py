@@ -170,6 +170,7 @@ class Web3Bridge:
             logging.info("Transaction failed on chain")
             return False
         else:
+            time.sleep(10)
             return True
 
     def check_tx_is_completed(self, tx_id) -> dict:
