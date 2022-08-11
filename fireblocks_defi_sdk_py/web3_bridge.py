@@ -19,7 +19,7 @@ from fireblocks_sdk.api_types import TRANSACTION_STATUS_CANCELLED
 from .chain import Chain
 from web3 import Web3
 
-SUBMIT_TIMEOUT = 90
+SUBMIT_TIMEOUT = 180
 STATUS_KEY = "status"
 
 FAILED_STATUS = [
@@ -99,7 +99,34 @@ class Web3Bridge:
         self.asset: str = CHAIN_TO_ASSET_ID[self.chain][0]
         self.web_provider = Web3(Web3.HTTPProvider(CHAIN_TO_ASSET_ID[self.chain][1]))
 
-    def send_transaction(self, transaction: dict, note="", test=False) -> dict:
+    def check_whitelisting(self, target_address: str):
+        whitelist_address = False
+        destination = None
+        whitelisted_addresses = self.fb_api_client.get_external_wallets()
+        target = target_address.lower()
+
+        for address in whitelisted_addresses:
+            for token in address["assets"]:
+                if token["address"].lower() == target:
+                    logging.debug("found address on whitelist")
+                    whitelist_address == True
+                    if self.asset == token["id"]:
+                        logging.debug(f"found correct asset for whitelisted address")
+                        destination = TransferPeerPath(EXTERNAL_WALLET, address["id"])
+                        return destination
+        if not destination:
+            if whitelist_address:
+                raise ValueError(
+                    f"Address is whitelisted but not correct asset, address: {target}, asset: {self.asset}"
+                )
+            else:
+                raise ValueError(
+                    f"Address not whitelisted, address: {target}, asset: {self.asset}"
+                )
+
+    def send_transaction(
+        self, transaction: dict, note="", test=False, approval_tx=False
+    ) -> dict:
         """
         Takes a ready transaction after being built (using web3 buildTransaction()) and transmits it to Fireblocks.
         :param transaction: A transaction object (dict) to submit to the blockchain.
@@ -107,31 +134,10 @@ class Web3Bridge:
         :return:
         """
         if not test:
-            whitelist_address = False
-            destination = None
-            whitelisted_addresses = self.fb_api_client.get_external_wallets()
-            for address in whitelisted_addresses:
-                target = transaction["to"].lower()
-                for token in address["assets"]:
-                    if token["address"].lower() == target:
-                        logging.debug("found address on whitelist")
-                        whitelist_address == True
-                        if self.asset == token["id"]:
-                            logging.debug(
-                                f"found correct asset for whitelisted address"
-                            )
-                            destination = TransferPeerPath(
-                                EXTERNAL_WALLET, address["id"]
-                            )
-            if not destination:
-                if whitelist_address:
-                    raise ValueError(
-                        f"Address is whitelisted but not correct asset, address: {whitelist_address}, asset: {self.asset}"
-                    )
-                else:
-                    raise ValueError(
-                        f"Address not whitelisted, address: {whitelist_address}, asset: {self.asset}"
-                    )
+            if not approval_tx:
+                destination = self.check_whitelisting(transaction["to"])
+            else:
+                destination = self.check_whitelisting(approval_tx)
         else:
             destination = DestinationTransferPeerPath(
                 ONE_TIME_ADDRESS, one_time_address={"address": transaction["to"]}
@@ -161,7 +167,7 @@ class Web3Bridge:
         logging.info("Checking on-chain status")
         try:
             receipt = self.web_provider.eth.wait_for_transaction_receipt(
-                tx_hash, timeout=120, poll_latency=1
+                tx_hash, timeout=240, poll_latency=1
             )
         except Exception as e:
             logging.info("Failed getting the receipt")
